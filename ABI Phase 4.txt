@@ -1,0 +1,105 @@
+from flask import Flask, render_template, request, redirect, url_for, session
+import uuid
+from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
+from ibm_watson import ApiException
+from ibm_watson import VisualRecognitionV3
+
+app = Flask(__name__)
+app.secret_key = 'your_secret_key'  # Change this to a secure secret key
+
+# IBM Cloud Video Streaming credentials
+API_KEY = 'your_api_key'
+IAM_AUTH_ENDPOINT = 'https://iam.cloud.ibm.com/identity/token'
+RESOURCE_INSTANCE_ID = 'your_resource_instance_id'
+VISUAL_RECOGNITION_API_KEY = 'your_visual_recognition_api_key'
+VISUAL_RECOGNITION_URL = 'your_visual_recognition_url'
+
+# In-memory database for demonstration purposes
+movies_database = [
+    {"id": 1, "title": "Movie 1", "url": "url_to_movie_1"},
+    {"id": 2, "title": "Movie 2", "url": "url_to_movie_2"},
+    # Add more movies as needed
+]
+
+users = {}
+
+def authenticate_ibm_cloud():
+    authenticator = IAMAuthenticator(API_KEY, url=IAM_AUTH_ENDPOINT)
+    visual_recognition = VisualRecognitionV3(version='2018-03-19', authenticator=authenticator)
+    visual_recognition.set_service_url(VISUAL_RECOGNITION_URL)
+
+    return visual_recognition
+
+def analyze_video(file_path):
+    visual_recognition = authenticate_ibm_cloud()
+
+    try:
+        with open(file_path, 'rb') as video_file:
+            response = visual_recognition.analyze(
+                collection_ids=["your_collection_id"],
+                features=["objects"],
+                images_file=[video_file],
+            ).get_result()
+            # Extract relevant information from the response
+            # You can customize this based on your needs
+            return response
+    except ApiException as e:
+        print(f"Exception while analyzing video: {e}")
+        return None
+
+@app.route('/upload', methods=['POST'])
+def upload():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+
+    username = session['username']
+    user_id = users[username]['id']
+
+    if 'file' not in request.files:
+        return "No file provided", 400
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return "Empty file name", 400
+
+    movie_id = str(uuid.uuid4())
+    movie_title = request.form.get('title', f"Movie {len(movies_database) + 1}")
+
+    # Save video file to a static folder (in a real scenario, you'd use a cloud storage service)
+    file.save(f"static/{movie_id}.mp4")
+
+    # Analyze video using IBM Cloud Visual Recognition
+    analysis_result = analyze_video(f"static/{movie_id}.mp4")
+
+    # Update database with the new movie information
+    movies_database.append({"id": movie_id, "title": movie_title, "url": f"/static/{movie_id}.mp4"})
+
+    return redirect(url_for('index'))
+
+if __name__ == '__main__':
+    app.run(debug=True)
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Video</title>
+</head>
+<body>
+    <h1>Upload Video</h1>
+    <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data">
+        <label for="title">Title:</label>
+        <input type="text" id="title" name="title"><br>
+
+        <label for="file">Select Video:</label>
+        <input type="file" id="file" name="file" accept="video/*" required><br>
+
+        <input type="submit" value="Upload">
+    </form>
+</body>
+</html>
+<!-- Add a link to the upload page -->
+<a href="{{ url_for('upload') }}">Upload Video</a>
+
